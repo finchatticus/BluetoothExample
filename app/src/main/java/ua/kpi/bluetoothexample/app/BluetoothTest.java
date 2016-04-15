@@ -10,15 +10,14 @@ import android.os.Handler;
 import android.text.method.ScrollingMovementMethod;
 import android.util.Log;
 import android.view.View;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.EditText;
 import android.widget.Button;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
-import java.nio.charset.Charset;
-import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -33,7 +32,7 @@ public class BluetoothTest extends Activity
     OutputStream mmOutputStream;
     InputStream mmInputStream;
     Thread workerThread;
-    byte[] readBuffer;
+    byte[] input;
     int readBufferPosition;
     int counter;
     volatile boolean stopWorker;
@@ -154,7 +153,7 @@ public class BluetoothTest extends Activity
 
         stopWorker = false;
         readBufferPosition = 0;
-        readBuffer = new byte[8192];
+        input = new byte[8192];
         workerThread = new Thread(new Runnable()
         {
             public void run()
@@ -171,16 +170,16 @@ public class BluetoothTest extends Activity
                             for(int i=0;i<bytesAvailable;i++)
                             {
                                 byte b = packetBytes[i];
-                                readBuffer[readBufferPosition++] = b;
+                                input[readBufferPosition++] = b;
                             }
 
                             *//*if(bytesAvailable > 8) {
                                 int oldType, oldDist, oldAzi, oldIncl;
-                                byte type = readBuffer[0];
+                                byte type = input[0];
                                 if((type & 0x3F) == 1) {
-                                    distance = readBuffer[1] + (readBuffer[2] << 8) + ((type & 0x40) << 10);
-                                    azimuth = (short)(readBuffer[3] + (readBuffer[4] << 8));
-                                    inclination = (short)(readBuffer[5] + (readBuffer[6] << 8));
+                                    distance = input[1] + (input[2] << 8) + ((type & 0x40) << 10);
+                                    azimuth = (short)(input[3] + (input[4] << 8));
+                                    inclination = (short)(input[5] + (input[6] << 8));
                                     sendData((byte) (type & 0x80 | 0x55)); // send acknowledge byte
                                     Log.v("B dist", Integer.toString(distance));
                                     Log.v("B azi", Integer.toString(azimuth));
@@ -209,14 +208,16 @@ public class BluetoothTest extends Activity
         workerThread.start();
     }*/
 
+    List<Data> dataList = new ArrayList<Data>();
     void beginListenForData()
     {
         final Handler handler = new Handler();
         final byte delimiter = 10; //This is the ASCII code for a newline character
 
         stopWorker = false;
+        boolean cycle = true;
         readBufferPosition = 0;
-        readBuffer = new byte[8192];
+        input = new byte[8];
         workerThread = new Thread(new Runnable()
         {
             public void run()
@@ -225,39 +226,25 @@ public class BluetoothTest extends Activity
                 {
                     try
                     {
-                        int bytesAvailable = mmInputStream.available();
-                        if(bytesAvailable > 0)
-                        {
-                            final byte[] packetBytes = new byte[bytesAvailable];
-                            mmInputStream.read(packetBytes);
-                            for(int i=0;i<bytesAvailable;i++)
-                            {
-                                byte b = packetBytes[i];
-                                readBuffer[readBufferPosition++] = b;
-                            }
-
-                            /*if(bytesAvailable > 8) {
-                                int oldType, oldDist, oldAzi, oldIncl;
-                                byte type = readBuffer[0];
-                                if((type & 0x3F) == 1) {
-                                    distance = readBuffer[1] + (readBuffer[2] << 8) + ((type & 0x40) << 10);
-                                    azimuth = (short)(readBuffer[3] + (readBuffer[4] << 8));
-                                    inclination = (short)(readBuffer[5] + (readBuffer[6] << 8));
-                                    sendData((byte) (type & 0x80 | 0x55)); // send acknowledge byte
-                                    Log.v("B dist", Integer.toString(distance));
-                                    Log.v("B azi", Integer.toString(azimuth));
-                                    Log.v("B incl", Integer.toString(inclination));
-                                    *//*if (type != oldType || distance != oldDist || azimuth != oldAzi || inclination != oldIncl) { // valid data
-                                        Store(distance, azimuth, inclination); // store new data
+                        while (true) {
+                            if (mmInputStream.available() >= 8) {
+                                int oldType = 0, oldDist = 0, oldAzi = 0, oldIncl = 0;  // previous
+                                mmInputStream.read(input, 0, 8); // receive 8 bytes
+                                byte type = input[0];
+                                if ((type & 0x3F) == 1) { // measurement data
+                                    int distance = input[1] + (input[2] << 8) + ((type & 0x40) << 10);
+                                    short azimuth = (short)(input[3] + (input[4] << 8));
+                                    short inclination = (short)(input[5] + (input[6] << 8));
+                                    mmOutputStream.write(type & 0x80 | 0x55);  // send acknowledge byte
+                                    if (type != oldType || distance != oldDist || azimuth != oldAzi || inclination != oldIncl) { // valid data
+                                        dataList.add(new Data(input));
                                         oldType = type;
                                         oldDist = distance;
                                         oldAzi = azimuth;
                                         oldIncl = inclination;
-                                    }*//*
-                                    stopWorker = true;
+                                    }
                                 }
-                            }*/
-
+                            }
                         }
                     }
                     catch (IOException ex)
@@ -290,41 +277,21 @@ public class BluetoothTest extends Activity
 
         myLabel.setText("Bluetooth Closed\n");
         textView.append("ReadBuffer\n");
-        textView.append("ReadBuffer len " + readBuffer.length + "\n");
-        for (int i = 0; i < 123; i++) {
-            if(i % 8 == 0) {
-                textView.append("###################\n");
+        textView.append("len " + dataList.size() + "\n\n\n");
+
+        for (int i = 0; i < dataList.size(); i++) {
+            textView.append("dist " + dataList.get(i).getDistance() + "\n");
+            textView.append("azim " + dataList.get(i).getAzimuth()+ "\n");
+            textView.append("incl " + dataList.get(i).getInclination() + "\n");
+            textView.append("roll " + dataList.get(i).getRoll() + "\n");
+            textView.append("dist0 " + dataList.get(i).getDistance0() + "\n");
+            textView.append("azim0 " + dataList.get(i).getAzimuth0()+ "\n");
+            textView.append("incl0 " + dataList.get(i).getInclination0() + "\n");
+            textView.append("roll0 " + dataList.get(i).getRoll0() + "\n");
+            for (int j = 0; j < 8; j++) {
+                textView.append(j + "  " + dataList.get(i).getBites(j) + "\n");
             }
-            String s1 = String.format("%8s", Integer.toBinaryString(readBuffer[i] & 0xFF)).replace(' ', '0');
-            Byte b = new Byte(readBuffer[i]);
-            textView.append(s1 + "  " + b.intValue() + "\n");
+            textView.append("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n");
         }
-
-        byte type = readBuffer[0];
-        if((type & 0x3F) == 1) {
-            distance = readBuffer[1] + (readBuffer[2] << 8) + ((type & 0x40) << 10);
-            azimuth = (short) (readBuffer[3] + (readBuffer[4] << 8));
-            inclination = (short) (readBuffer[5] + (readBuffer[6] << 8));
-        }
-
-        textView.append("type " + type);
-        textView.append("distance " + distance + "\n");
-        textView.append("azimuth " + azimuth + "\n");
-        textView.append("inclination " + inclination + "\n");
-
-        textView.append("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$\n");
-        byte[] test = {1, 49, 3, -17, 114, -51, 19, -2};
-        //byte[] test = {1, 120, 1, -23, -124, 29, 1, 2};
-        Data data = new Data(test);
-
-        textView.append("type " + data.getType() + "\n");
-        textView.append("distance " + data.getDistance() + "\n");
-        textView.append("azimuth " + data.getAzimuth() + "\n");
-        textView.append("inclination " + data.getInclination() + "\n");
-        textView.append("roll " + data.getRoll() + "\n");
-
-        textView.append("000000000000000000000000000000\n");
-
-
     }
 }
